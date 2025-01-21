@@ -365,7 +365,7 @@ class MultiAgentDroneEnv(Env):
                 self.detected_targets.add(idx)
 
         reward -= 1  # Flight time penalty
-        return reward
+        return reward  # Other penalties added to reward in the step function (since its a bit easier that way in code form)
 
 
 # Main script for testing
