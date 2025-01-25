@@ -89,41 +89,37 @@ class MultiAgentDroneEnv(Env):
         self.mutual_information = 0
         return self._get_observation(), {}
 
-    def render(self, mode, agent_paths=None):
-        """Render the environment for debugging or visualization."""
-        if mode == 'human':
-            grid = np.full(self.grid_size, '.', dtype=str)
-            for x, y in self.target_positions:
-                grid[x, y] = 'T'
-            for i, (x, y) in enumerate(self.state["positions"]):
-                grid[x, y] = f'A{i}'
-            print("\n".join(" ".join(row) for row in grid))
-            print(f"Mutual Information: {self.mutual_information:.2f}")
-            print(f"Steps: {self.steps}, Detected Targets: {len(self.detected_targets)} / {self.num_targets}")
-        
-        elif mode == 'rgb_array':
+    def render(self, mode='rgb_array', agent_paths=None):
+        """Render the environment for debugging or visualization."""      
+        if mode == 'rgb_array':
             fig, ax = plt.subplots(figsize=(8, 8))
-            map_data = np.flipud(self.state["map"].max(axis=-1))  # Visualizing the highest probability across layers
+            # The following axis manipulation was done because Python was not rendering the field of view update
+            # in the proper coordinate axis scheme
+            # No changes were made to the code or update logic otherwise, just the rendering part
+            map_data = np.flipud(self.state["map"].max(axis=-1)) 
+            map_data = np.fliplr(map_data)  # Visualizing the highest probability across layers
+            map_data = map_data.T
+            map_data = np.fliplr(map_data)
             ax.imshow(map_data, cmap='gray', interpolation='none', extent=[0, self.grid_size[1], 0, self.grid_size[0]])
 
             # Plot targets and their ROIs
             for (x, y), radius in zip(self.target_positions, self.roi_radii):
-                circle = plt.Circle((y, x), radius, color='red', alpha=0.3, label='ROI')
+                circle = plt.Circle((x, y), radius, color='red', alpha=0.3, label='ROI')
                 ax.add_artist(circle)
-                ax.plot(y, x, 'rx', markersize=12, label='Target')
+                ax.plot(x, y, 'rx', markersize=12, label='Target')
 
             # Plot agent positions and paths
             for i, (x, y) in enumerate(self.state["positions"]):
-                ax.plot(y, x, 'bo', markersize=8, label=f'Agent {i}')
+                ax.plot(x, y, 'bo', markersize=8, label=f'Agent {i}')
                 if agent_paths and i in agent_paths:
                     path = np.array(agent_paths[i])
-                    ax.plot(path[:, 1], path[:, 0], 'b--', linewidth=1, alpha=0.7)
+                    ax.plot(path[:, 0], path[:, 1], 'b--', linewidth=1, alpha=0.7)
 
             plt.title("Multi-Agent Drone Environment")
-            ax.set_xticks(range(0, self.grid_size[1], max(1, self.grid_size[1] // 10)))
-            ax.set_yticks(range(0, self.grid_size[0], max(1, self.grid_size[0] // 10)))
-            ax.set_xlim(0, self.grid_size[1])
-            ax.set_ylim(0, self.grid_size[0])
+            ax.set_xticks(range(0, self.grid_size[0], max(1, self.grid_size[0] // 10)))
+            ax.set_yticks(range(0, self.grid_size[1], max(1, self.grid_size[1] // 10)))
+            ax.set_xlim(0, self.grid_size[0])
+            ax.set_ylim(0, self.grid_size[1])
             plt.legend(loc='lower right')
             plt.grid(True, which='major', linestyle='--', linewidth=0.5)
             plt.show(block=False)
@@ -360,8 +356,10 @@ class MultiAgentDroneEnv(Env):
 # Main script for testing (random policy just to check whether or not the environment is running)
 if __name__ == "__main__":
     env = MultiAgentDroneEnv(
+        # Please enter y coordinate first and then x coordinate, for some reason the render
+        # function
         agent_positions=[(1, 1, 60), (99, 99, 240)],
-        target_positions=[(30, 30), (70, 70)],
+        target_positions=[(40, 90), (70, 35)],
         grid_size=(100, 100),
         radius_field_of_view=5,
         target_threshold=np.log(19),
