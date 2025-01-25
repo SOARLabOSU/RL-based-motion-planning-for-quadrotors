@@ -42,7 +42,7 @@ class MultiAgentDroneEnv(Env):
 
         self.state = None
         self.steps = 0
-        self.likelihood_ratios = np.zeros(self.grid_size)
+        self.log_likelihood_ratios = np.zeros(self.grid_size)
         self.mutual_information = 0  # Initialize mutual information
         self.np_random = None  # Random number generator for seed-based consistency
 
@@ -85,7 +85,7 @@ class MultiAgentDroneEnv(Env):
             "directions": initial_directions,
             "map": probabilistic_map
         }
-        self.likelihood_ratios = np.zeros(self.grid_size)
+        self.log_likelihood_ratios = np.zeros(self.grid_size)
         self.mutual_information = 0
         return self._get_observation(), {}
 
@@ -149,29 +149,21 @@ class MultiAgentDroneEnv(Env):
         self._update_information()
 
         # Detect targets
-        global_likelihood = np.sum(self.likelihood_ratios)
+        global_likelihood = np.sum(self.log_likelihood_ratios)
         if global_likelihood > self.target_threshold * self.grid_size[0] * self.grid_size[1]:
             print("Global target detection triggered.")
             self.detected_targets.add("global")
 
         
         
-        for idx, target in enumerate(self.target_positions):  # This location constraint is for debugging, once the likelihood ratio update is fixed I will remove it
-            tx, ty = target
-            detected = False
-            for dx in [-5, 0, 5]:
-                for dy in [-5, 0, 5]:
-                    if 0 <= tx + dx < self.grid_size[0] and 0 <= ty + dy < self.grid_size[1]:
-                        if self.likelihood_ratios[tx + dx, ty + dy] > self.target_threshold:
-                            print(f"Target {idx} detected near ({tx + dx}, {ty + dy}) with likelihood {self.likelihood_ratios[tx + dx, ty + dy]:.4f}")
-                            self.detected_targets.add(idx)
-                            detected = True
-                            break
-                if detected:
-                    break
+        for x in range(self.grid_size[0]):
+            for y in range(self.grid_size[1]):
+                if self.log_likelihood_ratios[x, y] > self.target_threshold:
+                    print(f"Target detected at cell ({x}, {y}) with log likelihood ratio {self.log_likelihood_ratios[x, y]:.4f}")
+             
             
             '''
-            if idx not in self.detected_targets and self.likelihood_ratios[tx, ty] > self.target_threshold:
+            if idx not in self.detected_targets and self.log_likelihood_ratios[tx, ty] > self.target_threshold:
                 print(f"Target detected at cell: {target}")
                 self.detected_targets.add(idx)
             '''
@@ -265,7 +257,7 @@ class MultiAgentDroneEnv(Env):
     def _update_information(self):
         """Update the probabilistic map, likelihood ratios, and compute mutual information."""
         self.mutual_information = 0
-        self.likelihood_ratios *= self.likelihood_decay
+        self.log_likelihood_ratios *= self.likelihood_decay
 
         for position in self.state["positions"]:
             x, y = position
@@ -281,7 +273,7 @@ class MultiAgentDroneEnv(Env):
                 v, u, o = self.state["map"][new_x, new_y]
                 
                 m_g = 4
-                m_z = 4
+                m_z = 10  # High value of m_z needed for accurate target detection
                 
                 w_g = self.np_random.normal(0, 1)  # white noise for G sensor
                 w_z = self.np_random.normal(0, 1)  # white noise for Z sensor
@@ -320,29 +312,26 @@ class MultiAgentDroneEnv(Env):
                 self.state["map"][new_x, new_y, 2] = p_O
 
                 # Measurement Update
+                #log_measurement_update = np.log(z_given_O) - np.log(z_given_VU)
                 log_measurement_update = m_z * (z_k - m_z / 2)  # Measurement likelihood update
                 
-                # Motion Update
+                '''
+                # Motion Update (for stationary targets, this is irrelevant, as forecast posterior equals the prior)
                 log_motion_update = 0  # Default motion update for stationary targets
-                
-                # For stationary targets, forecast posterior equals the prior
-                if p_O > 1/3:
-                    log_motion_update = np.log(p_O + 1e-10)
-                else:  # Outside ROI
-                    log_motion_update = np.log(1 - p_O + 1e-10)
+                '''
                     
                 # Combine updates into the log likelihood ratio
-                log_likelihood_ratio_update = log_measurement_update + log_motion_update
-                self.likelihood_ratios[new_x, new_y] += log_likelihood_ratio_update
+                log_likelihood_ratio_update = log_measurement_update # + log_motion_update
+                self.log_likelihood_ratios[new_x, new_y] += log_likelihood_ratio_update
 
                 
-                if self.likelihood_ratios[new_x, new_y] > self.target_threshold:
-                    print(f"Target detected at cell: ({new_x, new_y})")
+                if self.log_likelihood_ratios[new_x, new_y] > self.target_threshold:
+                    print(f"Target detected at cell: ({new_x, new_y}) with log likelihood ratio {self.log_likelihood_ratios[new_x, new_y]}")
                 
-                #print(f"Likelihood ratios for targets:")
+                #print(f"Log Likelihood ratios for targets:")
                 #for idx, target in enumerate(self.target_positions):
                     #tx, ty = target
-                    #print(f"Target {idx} at ({tx}, {ty}): {self.likelihood_ratios[tx, ty]:.4f}")
+                    #print(f"Target {idx} at ({tx}, {ty}): {self.log_likelihood_ratios[tx, ty]:.4f}")
 
 
                 H_C = -np.sum([p * np.log2(p + 1e-8) for p in [p_V, p_U, p_O]])
@@ -360,15 +349,15 @@ class MultiAgentDroneEnv(Env):
         for idx, target in enumerate(self.target_positions):
             if idx in self.detected_targets:
                 reward -= 2  # Target already detected
-            elif self.likelihood_ratios[target] > self.target_threshold:
+            elif self.log_likelihood_ratios[target] > self.target_threshold:
                 reward += 10  # New target detected
                 self.detected_targets.add(idx)
 
         reward -= 1  # Flight time penalty
-        return reward  # Other penalties added to reward in the step function (since its a bit easier that way in code form)
+        return reward
 
 
-# Main script for testing
+# Main script for testing (random policy just to check whether or not the environment is running)
 if __name__ == "__main__":
     env = MultiAgentDroneEnv(
         agent_positions=[(1, 1, 60), (99, 99, 240)],
@@ -384,7 +373,7 @@ if __name__ == "__main__":
     agent_paths = {i: [env.state["positions"][i]] for i in range(env.num_agents)}
 
     for _ in range(env.max_steps):
-        actions = env.action_space.sample()
+        actions = env.action_space.sample()   # Just taking a random action at this point, no RL involved here at this moment.
         state, reward, done, _ = env.step(actions)
         for i, pos in enumerate(env.state["positions"]):
             agent_paths[i].append(pos)
