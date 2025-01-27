@@ -47,10 +47,21 @@ class MultiAgentDroneEnv(Env):
         self.np_random = None  # Random number generator for seed-based consistency
 
     def _get_observation(self):
+        """These are local normalized observations of agents for the decentralized actor network"""
         positions = self.state["positions"].flatten() / np.array(self.grid_size).max()
         directions = self.state["directions"] / 360.0
         map_flat = self.state["map"].flatten()
-        return np.concatenate([positions, directions, map_flat])
+        likelihood_ratios_flat = self.log_likelihood_ratios.flatten() / np.max(self.log_likelihood_ratios + 1e-8)
+        return np.concatenate([positions, directions, map_flat, likelihood_ratios_flat])
+    
+    def get_flat_global_state(self):
+        """Get GLOBAL unnormalized state and flatten (concatenate) it into a single array to feed into the RL algorithm"""
+        positions_flat = self.state["positions"].flatten()
+        directions_flat = self.state["directions"].flatten()
+        map_flat = self.state["map"].flatten()
+        likelihood_ratios_flat = self.log_likelihood_ratios.flatten()
+        return np.concatenate([positions_flat, directions_flat, map_flat, likelihood_ratios_flat])
+
 
     def _initialize_roi_mask(self):
         """Initialize the ROI mask with random radii."""
@@ -164,14 +175,22 @@ class MultiAgentDroneEnv(Env):
                 self.detected_targets.add(idx)
             '''
         reward = self._compute_reward() + penalty
-        done = self.steps >= self.max_steps or len(self.detected_targets) == self.num_targets
-        if done:
-            print(f"Termination Condition Reached: {'Max steps' if self.steps >= self.max_steps else 'All targets detected'}")
+        done = False  # Set done to False by default
         
-        # Early termination for stagnation
-        if self.mutual_information < 0.01 and self.steps > 10:
+        # Terminate the episode if all targets are detected
+        if len(self.detected_targets) == self.num_targets:
+            print("All targets detected. Ending episode.")
+            done = True
+        
+        # Early termination of episode for stagnation
+        elif self.mutual_information < 0.01 and self.steps > 20:
             print("Exploration stagnated, ending episode.")
             done = True
+           
+        elif self.steps >= self.max_steps:
+            print(f"Termination Condition Reached: {'Max steps' if self.steps >= self.max_steps else 'All targets detected'}")
+            done = True
+        
         
         return self._get_observation(), reward, done, {}
 
@@ -344,21 +363,21 @@ class MultiAgentDroneEnv(Env):
 
         for idx, target in enumerate(self.target_positions):
             if idx in self.detected_targets:
-                reward -= 2  # Target already detected
+                reward -= 10  # Target already detected
             elif self.log_likelihood_ratios[target] > self.target_threshold:
-                reward += 10  # New target detected
+                reward += 20  # New target detected
                 self.detected_targets.add(idx)
 
-        reward -= 1  # Flight time penalty
+        reward -= 5  # Flight time penalty
         return reward
 
-
+'''
 # Main script for testing (random policy just to check whether or not the environment is running)
 if __name__ == "__main__":
     env = MultiAgentDroneEnv(
         # Please enter y coordinate first and then x coordinate, for some reason the render
         # function
-        agent_positions=[(1, 1, 60), (99, 99, 240)],
+        agent_positions=[(1, 99, 120), (99, 1, 270)],
         target_positions=[(40, 90), (70, 35)],
         grid_size=(100, 100),
         radius_field_of_view=5,
@@ -379,3 +398,4 @@ if __name__ == "__main__":
         print(f"Reward: {reward}")
         if done:
             break
+'''
